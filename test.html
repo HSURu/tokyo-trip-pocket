@@ -1,0 +1,1035 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Investment Pocket</title>
+
+  <!-- Tailwind -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Vue 3 -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+
+  <!-- Chart.js (Pie) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <style>
+    :root { --safe-b: env(safe-area-inset-bottom); --safe-t: env(safe-area-inset-top); }
+    html, body { height: 100%; background: #0b1220; }
+  </style>
+</head>
+
+<body class="min-h-full text-slate-100">
+  <div id="app" class="min-h-full">
+    <div class="mx-auto max-w-[980px] min-h-screen relative">
+      <!-- bg glow -->
+      <div class="absolute inset-0 pointer-events-none">
+        <div class="absolute -top-24 -left-24 w-72 h-72 rounded-full blur-3xl opacity-25 bg-indigo-500"></div>
+        <div class="absolute top-32 -right-24 w-72 h-72 rounded-full blur-3xl opacity-20 bg-fuchsia-500"></div>
+        <div class="absolute bottom-24 left-20 w-80 h-80 rounded-full blur-3xl opacity-15 bg-cyan-500"></div>
+      </div>
+
+      <!-- Header -->
+      <header class="relative px-5 pt-[calc(16px+var(--safe-t))] pb-4">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <div class="text-xs tracking-wide text-slate-300">Investment Pocket</div>
+            <div class="text-2xl font-semibold">投資紀錄小幫手</div>
+            <div class="text-xs text-slate-300 mt-1">標的 / 定期定額 / 圓餅圖 / 股利 & 成長試算</div>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <button @click="openSettings=true"
+              class="rounded-2xl px-3 py-2 bg-white/10 hover:bg-white/15 border border-white/10 backdrop-blur">
+              ⚙️ 設定
+            </button>
+            <div class="flex flex-col items-end">
+              <button @click="fetchAllQuotes()"
+                class="rounded-2xl px-3 py-2 bg-cyan-500/90 hover:bg-cyan-500 text-white font-medium">
+                🔄 重新抓取資料
+              </button>
+              <div class="text-[10px] text-slate-300 mt-1">
+                最近更新：{{ lastQuoteAt ? fmtTime(lastQuoteAt) : "尚未" }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Summary cards -->
+        <div class="mt-4 grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div class="rounded-3xl p-3 bg-white/10 border border-white/10 backdrop-blur">
+            <div class="text-xs text-slate-300">標的數</div>
+            <div class="text-lg font-semibold">{{ assets.length }}</div>
+          </div>
+          <div class="rounded-3xl p-3 bg-white/10 border border-white/10 backdrop-blur">
+            <div class="text-xs text-slate-300">交易筆數</div>
+            <div class="text-lg font-semibold">{{ transactions.length }}</div>
+          </div>
+          <div class="rounded-3xl p-3 bg-white/10 border border-white/10 backdrop-blur">
+            <div class="text-xs text-slate-300">每月定期定額</div>
+            <div class="text-lg font-semibold">{{ fmtMoney(totalMonthlyDCA) }}</div>
+          </div>
+          <div class="rounded-3xl p-3 bg-white/10 border border-white/10 backdrop-blur">
+            <div class="text-xs text-slate-300">目前總市值（估）</div>
+            <div class="text-lg font-semibold">{{ fmtMoney(totalMarketValue) }}</div>
+          </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="mt-4 flex gap-2 p-1 rounded-3xl bg-white/10 border border-white/10 backdrop-blur">
+          <button v-for="t in tabs" :key="t.key" @click="activeTab=t.key"
+            class="flex-1 rounded-3xl px-3 py-2 text-sm font-medium transition"
+            :class="activeTab===t.key ? 'bg-white text-slate-900 shadow' : 'text-slate-200 hover:bg-white/10'">
+            {{ t.label }}
+          </button>
+        </div>
+      </header>
+
+      <main class="relative px-5 pb-[calc(24px+var(--safe-b))] space-y-4">
+        <!-- Assets -->
+        <section v-show="activeTab==='assets'" class="space-y-4">
+          <div class="rounded-3xl p-4 bg-white/10 border border-white/10 backdrop-blur">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <div class="text-sm font-semibold">投資標的</div>
+                <div class="text-xs text-slate-300">代號可用 Stooq 格式（例如 AAPL.US），也可手動輸入價格</div>
+              </div>
+              <button @click="addAsset()"
+                class="rounded-2xl px-3 py-2 bg-indigo-500/90 hover:bg-indigo-500 text-white font-medium">
+                ＋ 新增標的
+              </button>
+            </div>
+
+            <div v-if="assets.length===0" class="mt-4 text-center text-slate-300 text-sm py-6">
+              先新增一個標的開始記錄吧 ✨
+            </div>
+
+            <div class="mt-4 grid md:grid-cols-2 gap-3">
+              <div v-for="a in assets" :key="a.id"
+                class="rounded-3xl p-3 bg-white/5 border border-white/10">
+                <div class="flex items-start justify-between gap-2">
+                  <div class="flex-1 min-w-0">
+                    <div class="flex gap-2">
+                      <div class="relative">
+                        <input v-model.trim="a.symbol" placeholder="代號（例 AAPL.US）"
+                          @input="updateSymbolSearch(a)" @blur="fetchQuoteForAsset(a)" @change="fetchQuoteForAsset(a)" @keyup.enter="fetchQuoteForAsset(a)"
+                          class="w-36 rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm" />
+                        <!-- suggestions -->
+                        <ul v-if="symbolSearch[a.id] && symbolSearch[a.id].length" class="absolute z-10 mt-1 w-36 bg-white text-slate-900 rounded shadow-lg max-h-40 overflow-auto text-xs">
+                          <li v-for="opt in symbolSearch[a.id]" :key="opt.symbol" class="px-2 py-1 hover:bg-slate-200 cursor-pointer"
+                              @mousedown.prevent="selectSymbol(a, opt)">{{ opt.symbol }} – {{ opt.name }}</li>
+                        </ul>
+                      </div>
+                      <input v-model.trim="a.name" placeholder="名稱"
+                        class="flex-1 rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm" />
+                    </div>
+
+                    <div class="mt-2 grid grid-cols-2 gap-2">
+                      <div class="rounded-2xl p-2 bg-white/5 border border-white/10">
+                        <div class="text-xs text-slate-300">每月定期定額</div>
+                        <input v-model.number="a.monthlyDca" type="number" min="0" placeholder="0"
+                          class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm" />
+                      </div>
+                      <div class="rounded-2xl p-2 bg-white/5 border border-white/10">
+                        <div class="text-xs text-slate-300">手動現價（可選）</div>
+                        <input v-model.number="a.manualPrice" type="number" min="0" placeholder="0"
+                          class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm" />
+                      </div>
+                    </div>
+
+                    <div class="mt-2 grid grid-cols-2 gap-2">
+                      <div class="rounded-2xl p-2 bg-white/5 border border-white/10">
+                        <div class="text-xs text-slate-300">股利模式</div>
+                        <select v-model="a.dividendMode"
+                          class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm">
+                          <option value="perShare">每股股利（年）</option>
+                          <option value="yield">殖利率（年）</option>
+                        </select>
+                        <div class="mt-2">
+                          <input v-model.number="a.dividendValue" type="number" min="0" placeholder="0"
+                            class="w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm" />
+                          <div class="text-[11px] text-slate-400 mt-1"
+                               v-if="a.dividendMode==='perShare'">填「每股一年發多少」</div>
+                          <div class="text-[11px] text-slate-400 mt-1"
+                               v-else>填「年殖利率 %」（例如 5）</div>
+                        </div>
+                      </div>
+
+                      <div class="rounded-2xl p-2 bg-white/5 border border-white/10">
+                        <div class="text-xs text-slate-300">預期年化成長率（%）</div>
+                        <input v-model.number="a.growthRate" type="number" step="0.1" placeholder="例如 6"
+                          class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm" />
+                        <div class="text-[11px] text-slate-400 mt-1">用於未來市值試算（CAGR）</div>
+                      </div>
+                    </div>
+
+                    <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                      <span class="px-2 py-1 rounded-full bg-white/5 border border-white/10 text-slate-300">
+                        現價：<span class="text-slate-100 font-semibold">{{ fmtMoney(currentPrice(a)) }}</span>
+                      </span>
+                      <span class="px-2 py-1 rounded-full bg-white/5 border border-white/10 text-slate-300">
+                        持股：<span class="text-slate-100 font-semibold">{{ holdingsBySymbol[a.symbol]?.shares ?? 0 }}</span>
+                      </span>
+                      <span class="px-2 py-1 rounded-full bg-white/5 border border-white/10 text-slate-300">
+                        市值：<span class="text-slate-100 font-semibold">{{ fmtMoney(marketValueOf(a.symbol)) }}</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  <button @click="removeAsset(a.id)"
+                    class="rounded-2xl px-3 py-2 bg-rose-500/80 hover:bg-rose-500 text-white"
+                    title="刪除標的">🗑️</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Transactions -->
+        <section v-show="activeTab==='tx'" class="space-y-4">
+          <div class="rounded-3xl p-4 bg-white/10 border border-white/10 backdrop-blur">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <div class="text-sm font-semibold">交易紀錄</div>
+                <div class="text-xs text-slate-300">每次買/賣都會記錄，可匯出報表</div>
+              </div>
+              <div class="flex gap-2">
+                <button @click="addTransaction()"
+                  class="rounded-2xl px-3 py-2 bg-emerald-500/90 hover:bg-emerald-500 text-white font-medium">
+                  ＋ 新增交易
+                </button>
+              </div>
+            </div>
+
+            <div class="mt-4 grid lg:grid-cols-3 gap-3">
+              <div class="rounded-3xl p-3 bg-white/5 border border-white/10">
+                <div class="text-xs text-slate-300">日期</div>
+                <input v-model="newTx.date" type="date"
+                  class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-emerald-300 text-sm" />
+              </div>
+
+              <div class="rounded-3xl p-3 bg-white/5 border border-white/10">
+                <div class="text-xs text-slate-300">標的代號</div>
+                <input v-model.trim="newTx.symbol" placeholder="例如 AAPL.US"
+                  class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-emerald-300 text-sm" />
+              </div>
+
+              <div class="rounded-3xl p-3 bg-white/5 border border-white/10">
+                <div class="text-xs text-slate-300">買/賣</div>
+                <select v-model="newTx.side"
+                  class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-emerald-300 text-sm">
+                  <option value="BUY">買入</option>
+                  <option value="SELL">賣出</option>
+                </select>
+              </div>
+
+              <div class="rounded-3xl p-3 bg-white/5 border border-white/10">
+                <div class="text-xs text-slate-300">股數</div>
+                <input v-model.number="newTx.shares" type="number" step="0.0001"
+                  class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-emerald-300 text-sm" />
+              </div>
+
+              <div class="rounded-3xl p-3 bg-white/5 border border-white/10">
+                <div class="text-xs text-slate-300">成交價</div>
+                <input v-model.number="newTx.price" type="number" step="0.0001"
+                  class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-emerald-300 text-sm" />
+              </div>
+
+              <div class="rounded-3xl p-3 bg-white/5 border border-white/10">
+                <div class="text-xs text-slate-300">手續費（可選）</div>
+                <input v-model.number="newTx.fee" type="number" step="0.01"
+                  class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-emerald-300 text-sm" />
+              </div>
+            </div>
+
+            <div class="mt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div class="text-xs text-slate-300">
+                交易金額：<span class="text-slate-100 font-semibold">{{ fmtMoney(newTxAmount) }}</span>
+                <span class="text-slate-400">（買入為支出、賣出為收入）</span>
+              </div>
+              <button @click="commitTransaction()"
+                class="rounded-2xl px-4 py-2 bg-emerald-500/90 hover:bg-emerald-500 text-white font-semibold">
+                ✅ 記錄交易
+              </button>
+            </div>
+          </div>
+
+          <!-- List -->
+          <div class="rounded-3xl p-4 bg-white/10 border border-white/10 backdrop-blur">
+            <div class="flex items-center justify-between">
+              <div class="text-sm font-semibold">紀錄列表</div>
+              <div class="text-xs text-slate-300">最新在前</div>
+            </div>
+
+            <div v-if="transactions.length===0" class="mt-4 text-center text-slate-300 text-sm py-6">
+              還沒有任何交易紀錄
+            </div>
+
+            <div class="mt-4 overflow-x-auto">
+              <table class="min-w-full text-sm">
+                <thead class="text-slate-300">
+                  <tr class="border-b border-white/10">
+                    <th class="text-left py-2 pr-3">日期</th>
+                    <th class="text-left py-2 pr-3">代號</th>
+                    <th class="text-left py-2 pr-3">買/賣</th>
+                    <th class="text-right py-2 pr-3">股數</th>
+                    <th class="text-right py-2 pr-3">價格</th>
+                    <th class="text-right py-2 pr-3">費用</th>
+                    <th class="text-right py-2 pr-3">金額</th>
+                    <th class="text-right py-2">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="tx in transactions" :key="tx.id" class="border-b border-white/10">
+                    <td class="py-2 pr-3 whitespace-nowrap">{{ tx.date }}</td>
+                    <td class="py-2 pr-3 whitespace-nowrap">{{ tx.symbol }}</td>
+                    <td class="py-2 pr-3 whitespace-nowrap">
+                      <span class="px-2 py-1 rounded-full text-xs"
+                        :class="tx.side==='BUY' ? 'bg-emerald-500/15 border border-emerald-400/20 text-emerald-200' : 'bg-amber-500/15 border border-amber-400/20 text-amber-200'">
+                        {{ tx.side==='BUY' ? '買入' : '賣出' }}
+                      </span>
+                    </td>
+                    <td class="py-2 pr-3 text-right">{{ tx.shares }}</td>
+                    <td class="py-2 pr-3 text-right">{{ fmtMoney(tx.price) }}</td>
+                    <td class="py-2 pr-3 text-right">{{ fmtMoney(tx.fee || 0) }}</td>
+                    <td class="py-2 pr-3 text-right">{{ fmtMoney(txAmount(tx)) }}</td>
+                    <td class="py-2 text-right">
+                      <button @click="deleteTx(tx.id)"
+                        class="rounded-2xl px-3 py-1.5 bg-rose-500/80 hover:bg-rose-500 text-white text-xs">
+                        刪除
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- Analytics -->
+        <section v-show="activeTab==='analytics'" class="space-y-4">
+          <div class="rounded-3xl p-4 bg-white/10 border border-white/10 backdrop-blur">
+            <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+              <div>
+                <div class="text-sm font-semibold">圓餅圖 & 試算</div>
+                <div class="text-xs text-slate-300">可切換用股數或市值來看占比，也可估股利與未來成長</div>
+              </div>
+
+              <div class="flex flex-wrap gap-2">
+                <label class="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-white/5 border border-white/10 cursor-pointer">
+                  <input type="radio" class="accent-indigo-400" value="value" v-model="pieMode">
+                  <span class="text-sm">按市值</span>
+                </label>
+                <label class="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-white/5 border border-white/10 cursor-pointer">
+                  <input type="radio" class="accent-indigo-400" value="shares" v-model="pieMode">
+                  <span class="text-sm">按股數</span>
+                </label>
+
+                <label class="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-white/5 border border-white/10 cursor-pointer">
+                  <input type="checkbox" class="accent-cyan-400" v-model="includeZeroHoldings">
+                  <span class="text-sm">包含 0 持股</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="mt-4 grid lg:grid-cols-2 gap-4">
+              <div class="rounded-3xl p-3 bg-white/5 border border-white/10">
+                <div class="text-sm font-semibold">持倉占比</div>
+                <div class="text-xs text-slate-300 mt-1">圖表依照你目前持股/市值估算</div>
+                <div class="mt-3">
+                  <canvas id="pieChart" height="240"></canvas>
+                </div>
+              </div>
+
+              <div class="rounded-3xl p-3 bg-white/5 border border-white/10">
+                <div class="text-sm font-semibold">試算設定</div>
+
+                <div class="mt-3 grid grid-cols-2 gap-2">
+                  <div class="rounded-2xl p-2 bg-white/5 border border-white/10">
+                    <div class="text-xs text-slate-300">試算年數</div>
+                    <input v-model.number="projectionYears" type="number" min="1" max="50"
+                      class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm" />
+                  </div>
+                  <div class="rounded-2xl p-2 bg-white/5 border border-white/10">
+                    <div class="text-xs text-slate-300">每月額外投入（總額）</div>
+                    <input v-model.number="extraMonthly" type="number" min="0"
+                      class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm" />
+                    <div class="text-[11px] text-slate-400 mt-1">（除了各標的 monthlyDca 之外）</div>
+                  </div>
+                </div>
+
+                <div class="mt-3 rounded-3xl p-3 bg-white/5 border border-white/10">
+                  <div class="text-sm font-semibold">股利估算（年）</div>
+                  <div class="mt-2 space-y-2 text-sm">
+                    <div class="flex items-center justify-between">
+                      <span class="text-slate-300">估計年股利（合計）</span>
+                      <span class="font-semibold">{{ fmtMoney(estimatedAnnualDividend) }}</span>
+                    </div>
+                    <div class="text-xs text-slate-400">
+                      來源：每標的「每股股利」或「殖利率」＋目前持股與現價估算
+                    </div>
+                  </div>
+                </div>
+
+                <div class="mt-3 rounded-3xl p-3 bg-white/5 border border-white/10">
+                  <div class="text-sm font-semibold">未來成長試算</div>
+                  <div class="mt-2 space-y-2 text-sm">
+                    <div class="flex items-center justify-between">
+                      <span class="text-slate-300">目前市值（估）</span>
+                      <span class="font-semibold">{{ fmtMoney(totalMarketValue) }}</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                      <span class="text-slate-300">{{ projectionYears }} 年後市值（估）</span>
+                      <span class="font-semibold text-cyan-200">{{ fmtMoney(projectedValue) }}</span>
+                    </div>
+                    <div class="text-xs text-slate-400">
+                      公式：依各標的 CAGR（growthRate）成長，並加總 monthlyDca + extraMonthly 的定期投入（簡化模型）
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+            <div class="mt-4 rounded-3xl p-3 bg-white/5 border border-white/10 text-xs text-slate-300">
+              小提醒：試算為簡化估算（未含稅、配息再投入時點、匯率、股價波動等），僅供規劃參考。
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <!-- Settings Modal -->
+      <div v-if="openSettings" class="fixed inset-0 z-50 flex items-end justify-center bg-black/60 px-4 pb-[calc(16px+var(--safe-b))]">
+        <div class="w-full max-w-[980px] rounded-t-[32px] bg-slate-950 border border-white/10">
+          <div class="p-5">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="text-lg font-semibold">設定 & 備份</div>
+                <div class="text-xs text-slate-300">資料預設存在 localStorage；可匯出/匯入報表</div>
+              </div>
+              <button @click="openSettings=false" class="rounded-2xl px-3 py-2 bg-white/10 hover:bg-white/15 border border-white/10">✕</button>
+            </div>
+
+            <div class="mt-4 grid lg:grid-cols-2 gap-3">
+              <div class="rounded-3xl p-4 bg-white/5 border border-white/10">
+                <div class="font-semibold">⬇️ 匯出 / ⬆️ 匯入</div>
+                <div class="text-xs text-slate-300 mt-1">把資產與交易備份成 JSON 檔</div>
+
+                <div class="mt-3 flex flex-wrap gap-2">
+                  <button @click="exportJson()"
+                    class="rounded-2xl px-3 py-2 bg-white/10 hover:bg-white/15 border border-white/10">
+                    匯出 JSON
+                  </button>
+                  <label class="rounded-2xl px-3 py-2 bg-white/10 hover:bg-white/15 border border-white/10 cursor-pointer">
+                    匯入 JSON
+                    <input type="file" accept="application/json" class="hidden" @change="importJsonFile($event)" />
+                  </label>
+                  <button @click="resetAll()"
+                    class="rounded-2xl px-3 py-2 bg-rose-500/80 hover:bg-rose-500 text-white">
+                    重置全部
+                  </button>
+                </div>
+              </div>
+
+              <div class="rounded-3xl p-4 bg-white/5 border border-white/10">
+                <div class="font-semibold">🔑 API 設定</div>
+                <div class="text-xs text-slate-300 mt-1">
+                  若要自動查詢殖利率及成長率，可填入 FinancialModelingPrep API Key。
+                </div>
+                <div class="mt-3">
+                  <div class="text-xs text-slate-300">FMP API Key（可選）</div>
+                  <input v-model.trim="fmp.apiKey" placeholder="輸入 FinancialModelingPrep API Key"
+                    class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-cyan-400 text-sm" />
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-4 rounded-3xl p-4 bg-white/5 border border-white/10">
+              <div class="font-semibold">📈 報價來源</div>
+              <div class="text-xs text-slate-300 mt-1">
+                預設用 Stooq quote CSV（免 Key）。若你部署在 GitHub Pages 時遇到瀏覽器 CORS 擋住，請用「手動現價」或改用你自己的 proxy（Apps Script/Cloudflare Worker）。
+                Stooq 端點範例：<code class="text-slate-200">https://stooq.com/q/l/?s=AAPL.US&f=sd2t2ohlcvn&h&e=csv</code>
+                :contentReference[oaicite:3]{index=3}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Toast -->
+      <div class="fixed top-4 left-1/2 -translate-x-1/2 z-[60] px-4" v-if="toast.show">
+        <div class="max-w-[980px] rounded-3xl px-4 py-3 bg-slate-900/90 border border-white/10 backdrop-blur shadow-lg">
+          <div class="text-sm font-semibold">{{ toast.title }}</div>
+          <div class="text-xs text-slate-300 mt-0.5">{{ toast.message }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const STORAGE_KEY = "investment_pocket_v1";
+    const uid = () => Math.random().toString(36).slice(2, 10) + "-" + Date.now().toString(36);
+
+    function safeNum(x, d=0){ const n = Number(x); return Number.isFinite(n) ? n : d; }
+
+    // Stooq quote CSV example from public references:
+    // https://stooq.com/q/l/?s={symbol}&f=sd2t2ohlcvn&h&e=csv  (fields: symbol,date,time,open,high,low,close,volume,name)
+    async function fetchStooqQuote(symbol){
+      const url = `https://stooq.com/q/l/?s=${encodeURIComponent(symbol)}&f=sd2t2ohlcvn&h&e=csv`;
+      const res = await fetch(url, { cache: "no-store" });
+      if(!res.ok) throw new Error("HTTP " + res.status);
+      const text = await res.text();
+      const lines = text.trim().split(/\r?\n/);
+      if(lines.length < 2) throw new Error("No data");
+      const headers = lines[0].split(",");
+      const values = lines[1].split(",");
+      const row = {};
+      headers.forEach((h,i)=> row[h.trim()] = (values[i] ?? "").trim());
+      // close might be "N/D" in some cases
+      const close = Number(row.close);
+      return {
+        symbol: row.symbol || symbol,
+        close: Number.isFinite(close) ? close : null,
+        date: row.date || "",
+        time: row.time || "",
+        raw: row
+      };
+    }
+
+    const App = {
+      data(){
+        const today = new Date().toISOString().slice(0,10);
+        return {
+          tabs: [
+            { key: "assets", label: "📌 標的" },
+            { key: "tx", label: "🧾 紀錄" },
+            { key: "analytics", label: "📊 分析" },
+          ],
+          activeTab: "assets",
+
+          toast: { show:false, title:"", message:"" },
+          toastTimer: null,
+          openSettings: false,
+
+          currency: "TWD",
+
+          assets: [],
+          transactions: [],
+
+          quotes: {}, // symbol -> {close,date,time}
+          lastQuoteAt: null,
+
+          // optional FinancialModelingPrep API key for fetching yield/growth
+          fmp: { apiKey: "" },
+          symbolSearch: {}, // asset.id -> [ {symbol,name} ]
+
+          // new transaction form
+          newTx: { date: today, symbol:"", side:"BUY", shares:0, price:0, fee:0 },
+
+          // analytics
+          pieMode: "value", // value | shares
+          includeZeroHoldings: false,
+          projectionYears: 10,
+          extraMonthly: 0,
+
+          pieChart: null,
+        };
+      },
+      computed:{
+        holdingsBySymbol(){
+          const map = {};
+          for(const tx of this.transactions){
+            const sym = (tx.symbol || "").trim();
+            if(!sym) continue;
+            if(!map[sym]) map[sym] = { shares: 0, cost: 0, realized: 0 };
+            const sgn = tx.side === "SELL" ? -1 : 1;
+            const shares = safeNum(tx.shares);
+            const price = safeNum(tx.price);
+            const fee = safeNum(tx.fee);
+            // Simple cost tracking: BUY increases cost, SELL reduces shares and counts proceeds (not perfect avg cost accounting)
+            if(tx.side === "BUY"){
+              map[sym].shares += shares;
+              map[sym].cost += shares * price + fee;
+            } else {
+              map[sym].shares -= shares;
+              map[sym].realized += shares * price - fee;
+              // (We don't adjust cost basis precisely here; keep it simple for "record app")
+            }
+            // clamp tiny float
+            if(Math.abs(map[sym].shares) < 1e-10) map[sym].shares = 0;
+          }
+          return map;
+        },
+        totalMonthlyDCA(){
+          return this.assets.reduce((sum,a)=> sum + safeNum(a.monthlyDca), 0);
+        },
+        totalMarketValue(){
+          let sum = 0;
+          for(const a of this.assets){
+            const sym = (a.symbol||"").trim();
+            if(!sym) continue;
+            const shares = this.holdingsBySymbol[sym]?.shares ?? 0;
+            const price = this.currentPrice(a);
+            sum += shares * price;
+          }
+          return sum;
+        },
+        newTxAmount(){
+          const gross = safeNum(this.newTx.shares) * safeNum(this.newTx.price);
+          const fee = safeNum(this.newTx.fee);
+          return gross + fee;
+        },
+        estimatedAnnualDividend(){
+          // Estimate annual dividend total by asset settings + current holdings
+          let total = 0;
+          for(const a of this.assets){
+            const sym = (a.symbol||"").trim();
+            if(!sym) continue;
+            const shares = this.holdingsBySymbol[sym]?.shares ?? 0;
+            if(!this.includeZeroHoldings && shares <= 0) continue;
+            const price = this.currentPrice(a);
+            const mode = a.dividendMode || "perShare";
+            const v = safeNum(a.dividendValue);
+            if(mode === "perShare"){
+              total += shares * v;
+            } else {
+              // yield (%)
+              total += (shares * price) * (v/100);
+            }
+          }
+          return total;
+        },
+        projectedValue(){
+          // Simplified projection:
+          // Each asset grows by its CAGR; monthly contributions (monthlyDca) buy at current price and then grow as part of value.
+          // This is intentionally simplified and uses current price as constant purchase price.
+          const years = Math.max(1, safeNum(this.projectionYears, 10));
+          const months = years * 12;
+
+          // start with current holdings value
+          let value = this.totalMarketValue;
+
+          // monthly contributions
+          const totalMonthly = this.totalMonthlyDCA + safeNum(this.extraMonthly);
+
+          // approximate: apply average growth rate weighted by current value
+          // if no value, use average of assets growth
+          let avgGrowth = 0;
+          let weightSum = 0;
+
+          for(const a of this.assets){
+            const sym = (a.symbol||"").trim();
+            if(!sym) continue;
+            const shares = this.holdingsBySymbol[sym]?.shares ?? 0;
+            const price = this.currentPrice(a);
+            const mv = shares * price;
+            const g = safeNum(a.growthRate) / 100;
+            if(mv > 0){
+              avgGrowth += mv * g;
+              weightSum += mv;
+            }
+          }
+          if(weightSum > 0) avgGrowth = avgGrowth / weightSum;
+          else {
+            const gs = this.assets.map(a=> safeNum(a.growthRate)/100).filter(x=>Number.isFinite(x));
+            avgGrowth = gs.length ? (gs.reduce((s,x)=>s+x,0)/gs.length) : 0.06;
+          }
+
+          // monthly compounding from CAGR
+          const monthlyRate = Math.pow(1 + avgGrowth, 1/12) - 1;
+
+          for(let m=0; m<months; m++){
+            value = value * (1 + monthlyRate) + totalMonthly;
+          }
+          return value;
+        },
+      },
+      watch:{
+        assets: { deep:true, handler(){ this.persist(); this.refreshPie(); } },
+        transactions: { deep:true, handler(){ this.persist(); this.refreshPie(); } },
+        pieMode(){ this.refreshPie(); },
+        includeZeroHoldings(){ this.refreshPie(); },
+        projectionYears(){ /* computed */ },
+        extraMonthly(){ /* computed */ },
+
+      },
+      mounted(){
+        this.load();
+        this.ensureDefaults();
+        this.$nextTick(()=> this.initPie());
+      },
+      methods:{
+        showToast(title, message){
+          clearTimeout(this.toastTimer);
+          this.toast = { show:true, title, message };
+          this.toastTimer = setTimeout(()=> this.toast.show=false, 2200);
+        },
+        fmtMoney(n){
+          const num = safeNum(n);
+          // basic formatting (no currency conversion)
+          return num.toLocaleString("en-US", { maximumFractionDigits: 2 });
+        },
+        fmtTime(ts){
+          if(!ts) return "";
+          const d = new Date(ts);
+          return d.toLocaleString();
+        },
+        persist(){
+          const data = {
+            version: 1,
+            currency: this.currency,
+            assets: this.assets,
+            transactions: this.transactions,
+            quotes: this.quotes,
+            lastQuoteAt: this.lastQuoteAt,
+            fmp: this.fmp,
+            pieMode: this.pieMode,
+            includeZeroHoldings: this.includeZeroHoldings,
+            projectionYears: this.projectionYears,
+            extraMonthly: this.extraMonthly,
+          };
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        },
+        load(){
+          try{
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if(!raw) return;
+            const d = JSON.parse(raw);
+            this.currency = d.currency || "TWD";
+            this.assets = Array.isArray(d.assets) ? d.assets : [];
+            this.transactions = Array.isArray(d.transactions) ? d.transactions : [];
+            this.quotes = d.quotes || {};
+            this.lastQuoteAt = d.lastQuoteAt || null;
+            this.fmp = d.fmp || { apiKey: "" };
+            this.pieMode = d.pieMode || "value";
+            this.includeZeroHoldings = !!d.includeZeroHoldings;
+            this.projectionYears = safeNum(d.projectionYears, 10);
+            this.extraMonthly = safeNum(d.extraMonthly, 0);
+          }catch{
+            localStorage.removeItem(STORAGE_KEY);
+          }
+        },
+        ensureDefaults(){
+          // seed minimal if empty
+          if(this.assets.length === 0){
+            this.assets = [
+              { id: uid(), symbol: "0050.TW", name: "台灣50(示例)", monthlyDca: 3000, manualPrice: 0, dividendMode:"yield", dividendValue: 3.5, growthRate: 6 },
+              { id: uid(), symbol: "AAPL.US", name: "Apple(示例)", monthlyDca: 0, manualPrice: 0, dividendMode:"yield", dividendValue: 0.6, growthRate: 8 },
+            ];
+          }
+          this.persist();
+        },
+
+        // Assets
+        addAsset(){
+          this.assets.unshift({
+            id: uid(),
+            symbol: "",
+            name: "",
+            monthlyDca: 0,
+            manualPrice: 0,
+            dividendMode: "perShare",
+            dividendValue: 0,
+            growthRate: 6,
+          });
+          this.showToast("已新增", "請填代號與名稱");
+        },
+        // fetch single symbol when user inputs code
+        async fetchQuoteForAsset(asset){
+          const sym = (asset.symbol||"").trim();
+          if(!sym) return;
+          let q;
+          try{
+            q = await fetchStooqQuote(sym);
+            if(q.close == null) throw new Error("No close");
+            this.quotes[sym] = { close: q.close, date: q.date, time: q.time };
+            this.lastQuoteAt = new Date().toISOString();
+            this.refreshPie();
+            this.showToast("報價已更新", sym);
+          }catch(e){
+            this.showToast("報價失敗", `代號 ${sym} 無效`);
+          }
+          // if FMP key provided, try pull dividend/growth
+          if(this.fmp.apiKey && sym){
+            try{
+              const meta = await this.fetchFmpMeta(sym);
+              if(meta){
+                // apply to asset fields
+                asset.dividendMode = "yield";
+                asset.dividendValue = meta.dividendYield * 100 || asset.dividendValue;
+                if(meta.revenuePerShareGrowth != null){
+                  asset.growthRate = meta.revenuePerShareGrowth * 100;
+                }
+                this.showToast("已填充基本資料", sym);
+              }
+            }catch(e){
+              // ignore errors
+            }
+          }
+          // persist regardless
+          this.persist();
+        },
+        removeAsset(id){
+          const a = this.assets.find(x=>x.id===id);
+          if(!confirm(`確定刪除標的「${a?.symbol || a?.name || ""}」？`)) return;
+          this.assets = this.assets.filter(x=>x.id!==id);
+          this.showToast("已刪除", "標的已移除");
+        },
+        currentPrice(asset){
+          const sym = (asset.symbol||"").trim();
+          const q = sym ? this.quotes[sym] : null;
+          const qPrice = q && Number.isFinite(Number(q.close)) ? Number(q.close) : null;
+          const manual = safeNum(asset.manualPrice, 0);
+          return qPrice ?? (manual > 0 ? manual : 0);
+        },
+        marketValueOf(symbol){
+          const sym = (symbol||"").trim();
+          if(!sym) return 0;
+          const asset = this.assets.find(a => (a.symbol||"").trim()===sym);
+          if(!asset) return 0;
+          const shares = this.holdingsBySymbol[sym]?.shares ?? 0;
+          return shares * this.currentPrice(asset);
+        },
+
+        // Transactions
+        addTransaction(){
+          this.activeTab = "tx";
+          this.showToast("新增交易", "填完按「記錄交易」");
+        },
+        txAmount(tx){
+          const gross = safeNum(tx.shares) * safeNum(tx.price);
+          const fee = safeNum(tx.fee);
+          return gross + fee;
+        },
+        commitTransaction(){
+          const date = (this.newTx.date||"").trim();
+          const symbol = (this.newTx.symbol||"").trim();
+          const side = this.newTx.side;
+          const shares = safeNum(this.newTx.shares);
+          const price = safeNum(this.newTx.price);
+          const fee = safeNum(this.newTx.fee);
+
+          if(!date || !symbol || !side || shares <= 0 || price <= 0){
+            this.showToast("資料不完整", "請確認日期/代號/股數/價格");
+            return;
+          }
+
+          const tx = { id: uid(), date, symbol, side, shares, price, fee, createdAt: new Date().toISOString() };
+          this.transactions.unshift(tx);
+
+
+          // reset
+          this.newTx.symbol = "";
+          this.newTx.shares = 0;
+          this.newTx.price = 0;
+          this.newTx.fee = 0;
+
+          this.showToast("已記錄", `${symbol} ${side==="BUY"?"買":"賣"} ${shares}`);
+        },
+        deleteTx(id){
+          const tx = this.transactions.find(x=>x.id===id);
+          if(!confirm(`刪除交易：${tx?.symbol || ""} ${tx?.date || ""}？`)) return;
+          this.transactions = this.transactions.filter(x=>x.id!==id);
+          this.showToast("已刪除", "交易已移除");
+        },
+
+        // helper: pull metadata from FinancialModelingPrep ratios endpoint
+        async fetchFmpMeta(symbol){
+          const key = (this.fmp.apiKey||"").trim();
+          if(!key) return null;
+          const url = `https://financialmodelingprep.com/api/v3/ratios/${encodeURIComponent(symbol)}?limit=1&apikey=${encodeURIComponent(key)}`;
+          const res = await fetch(url);
+          if(!res.ok) throw new Error("FMP request failed");
+          const data = await res.json();
+          if(!Array.isArray(data) || data.length===0) return null;
+          const row = data[0];
+          return {
+            dividendYield: safeNum(row.dividendYield, 0),
+            revenuePerShareGrowth: safeNum(row.revenuePerShareGrowth, 0),
+            // you can add more fields here if needed
+          };
+        },
+        // search for symbol using FMP API (requires apiKey)
+        async searchSymbol(query){
+          const key = (this.fmp.apiKey||"").trim();
+          if(!key || !query) return [];
+          const url = `https://financialmodelingprep.com/api/v3/search-ticker?query=${encodeURIComponent(query)}&limit=10&exchange=NASDAQ&apikey=${encodeURIComponent(key)}`;
+          const res = await fetch(url);
+          if(!res.ok) return [];
+          const data = await res.json();
+          // returns array of {symbol,name,exchange,stockExchange}
+          return Array.isArray(data) ? data.map(r=>({symbol:r.symbol,name:r.name})) : [];
+        },
+        updateSymbolSearch(asset){
+          const q = (asset.symbol||"").trim();
+          if(q.length < 2){
+            this.$set(this.symbolSearch, asset.id, []);
+            return;
+          }
+          if(this.fmp.apiKey){
+            this.searchSymbol(q).then(res => {
+              this.$set(this.symbolSearch, asset.id, res);
+            }).catch(()=>{
+              this.$set(this.symbolSearch, asset.id, []);
+            });
+          }
+        },
+        selectSymbol(asset, opt){
+          asset.symbol = opt.symbol;
+          asset.name = opt.name;
+          this.$set(this.symbolSearch, asset.id, []);
+          this.fetchQuoteForAsset(asset);
+        },
+        // Quotes
+        async fetchAllQuotes(){
+          const symbols = [...new Set(this.assets.map(a => (a.symbol||"").trim()).filter(Boolean))];
+          if(symbols.length === 0){
+            this.showToast("沒有代號", "先在標的填代號");
+            return;
+          }
+          this.showToast("更新中", "正在抓取報價…");
+          let ok = 0, fail = 0;
+          for(const s of symbols){
+            try{
+              const q = await fetchStooqQuote(s);
+              if(q.close == null) throw new Error("No close");
+              this.quotes[s] = { close: q.close, date: q.date, time: q.time };
+              ok++;
+            }catch(e){
+              fail++;
+            }
+          }
+          // if FMP key provided, update asset metadata as well
+          if(this.fmp.apiKey){
+            for(const asset of this.assets){
+              const sym = (asset.symbol||"").trim();
+              if(!sym) continue;
+              try{
+                const meta = await this.fetchFmpMeta(sym);
+                if(meta){
+                  asset.dividendMode = "yield";
+                  asset.dividendValue = meta.dividendYield * 100 || asset.dividendValue;
+                  if(meta.revenuePerShareGrowth != null){
+                    asset.growthRate = meta.revenuePerShareGrowth * 100;
+                  }
+                }
+              }catch(e){
+                // ignore
+              }
+            }
+          }
+          this.lastQuoteAt = new Date().toISOString();
+          this.persist();
+          this.refreshPie();
+
+          if(fail>0){
+            this.showToast("報價部分失敗", `成功 ${ok} / 失敗 ${fail}（可能是瀏覽器 CORS 或代號不支援）`);
+          } else {
+            this.showToast("資料已更新", `成功更新 ${ok} 檔`);
+          }
+        },
+
+        // Pie chart
+        initPie(){
+          const ctx = document.getElementById("pieChart");
+          if(!ctx) return;
+          this.pieChart = new Chart(ctx, {
+            type: "pie",
+            data: { labels: [], datasets: [{ data: [] }] },
+            options: {
+              plugins: {
+                legend: { labels: { color: "rgba(226,232,240,0.9)" } },
+                tooltip: {
+                  callbacks: {
+                    label: (item) => {
+                      const v = item.raw;
+                      return `${item.label}: ${this.fmtMoney(v)}`;
+                    }
+                  }
+                }
+              }
+            }
+          });
+          this.refreshPie();
+        },
+        refreshPie(){
+          if(!this.pieChart) return;
+          const labels = [];
+          const data = [];
+
+          for(const a of this.assets){
+            const sym = (a.symbol||"").trim();
+            if(!sym) continue;
+            const shares = this.holdingsBySymbol[sym]?.shares ?? 0;
+            if(!this.includeZeroHoldings && shares <= 0) continue;
+
+            let v = 0;
+            if(this.pieMode === "shares"){
+              v = shares;
+            } else {
+              v = shares * this.currentPrice(a);
+            }
+            if(v <= 0) continue;
+
+            labels.push(a.name ? `${a.name} (${sym})` : sym);
+            data.push(v);
+          }
+
+          this.pieChart.data.labels = labels;
+          this.pieChart.data.datasets[0].data = data;
+          this.pieChart.update();
+        },
+
+        // Backup
+        exportJson(){
+          const payload = {
+            exportedAt: new Date().toISOString(),
+            data: JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}")
+          };
+          const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "investment-pocket-export.json";
+          a.click();
+          URL.revokeObjectURL(url);
+          this.showToast("已匯出", "investment-pocket-export.json");
+        },
+        importJsonFile(ev){
+          const file = ev.target.files?.[0];
+          if(!file) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            try{
+              const payload = JSON.parse(String(reader.result||""));
+              const d = payload.data || payload;
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
+              this.load();
+              this.$nextTick(()=> this.refreshPie());
+              this.showToast("已匯入", "資料已還原");
+              this.openSettings = false;
+            }catch{
+              this.showToast("匯入失敗", "請確認 JSON 格式");
+            }finally{
+              ev.target.value = "";
+            }
+          };
+          reader.readAsText(file);
+        },
+        resetAll(){
+          if(!confirm("確定重置全部資料？不可復原。")) return;
+          localStorage.removeItem(STORAGE_KEY);
+          location.reload();
+        },
+
+
+
+      }
+    };
+
+    Vue.createApp(App).mount("#app");
+  </script>
+</body>
+</html>
