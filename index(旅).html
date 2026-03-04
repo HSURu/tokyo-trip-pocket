@@ -1,0 +1,1307 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Trip Pocket App</title>
+
+  <!-- Tailwind (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Vue 3 (CDN) -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+
+  <!-- Leaflet (Map) -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+
+  <style>
+    :root { --safe-b: env(safe-area-inset-bottom); --safe-t: env(safe-area-inset-top); }
+    html, body { height: 100%; background: linear-gradient(135deg,#1e3a8a,#0f172a); }
+    .leaflet-container { border-radius: 1.25rem; }
+    /* slightly wider container for larger screens */
+    @media(min-width:640px){ .max-w-\[430px\]{ max-width:520px!important; } }
+  </style>
+</head>
+
+<body class="min-h-full text-slate-100">
+  <div id="app" class="min-h-full">
+    <div class="mx-auto max-w-[430px] min-h-screen relative">
+      <!-- Background glow -->
+      <div class="absolute inset-0 pointer-events-none">
+        <div class="absolute -top-24 -left-24 w-64 h-64 rounded-full blur-3xl opacity-30 bg-indigo-500"></div>
+        <div class="absolute top-48 -right-24 w-64 h-64 rounded-full blur-3xl opacity-25 bg-fuchsia-500"></div>
+        <div class="absolute bottom-24 left-10 w-72 h-72 rounded-full blur-3xl opacity-20 bg-cyan-500"></div>
+      </div>
+
+      <!-- Header -->
+      <header class="relative px-5 pt-[calc(16px+var(--safe-t))] pb-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-xs tracking-wide text-slate-300">Tokyo Trip Pocket</div>
+            <div class="text-xl font-semibold">東京旅遊小幫手</div>
+          </div>
+          <button
+            @click="openSettings = true"
+            class="rounded-2xl px-3 py-2 bg-white/10 hover:bg-white/15 active:bg-white/20 border border-white/10 backdrop-blur"
+            title="設定"
+          >⚙️</button>
+        </div>
+
+        <div class="mt-4 grid grid-cols-3 gap-3">
+          <div class="rounded-3xl p-3 bg-white/10 border border-white/10 backdrop-blur">
+            <div class="text-xs text-slate-300">天數</div>
+            <div class="text-lg font-semibold">{{ days.length }}</div>
+          </div>
+          <div class="rounded-3xl p-3 bg-white/10 border border-white/10 backdrop-blur">
+            <div class="text-xs text-slate-300">行程筆數</div>
+            <div class="text-lg font-semibold">{{ totalItineraryCount }}</div>
+          </div>
+          <div class="rounded-3xl p-3 bg-white/10 border border-white/10 backdrop-blur">
+            <div class="text-xs text-slate-300">支出筆數</div>
+            <div class="text-lg font-semibold">{{ expenses.length }}</div>
+          </div>
+        </div>
+
+        <div class="mt-4 flex gap-2 p-1 rounded-3xl bg-white/10 border border-white/10 backdrop-blur">
+          <button
+            v-for="t in tabs"
+            :key="t.key"
+            @click="activeTab = t.key"
+            class="flex-1 rounded-3xl px-3 py-2 text-sm font-medium transition"
+            :class="activeTab === t.key ? 'bg-white text-slate-900 shadow' : 'text-slate-200 hover:bg-white/10'"
+          >{{ t.label }}</button>
+        </div>
+      </header>
+
+      <main class="relative px-5 pb-[calc(96px+var(--safe-b))]">
+        <!-- Itinerary -->
+        <section v-show="activeTab === 'itinerary'" class="space-y-4"
+                 @touchstart="onTouchStart" @touchend="onTouchEnd" style="touch-action: pan-y;">
+          <div class="rounded-3xl p-4 bg-white/10 border border-white/10 backdrop-blur">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="text-sm font-semibold">旅程日期</div>
+                <div class="flex items-center gap-2 mt-1">
+                  <div>
+                    <label class="text-xs text-slate-300">出發</label>
+                    <input v-model="tripStart" type="date"
+                      class="ml-1 rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400" />
+                  </div>
+                  <div>
+                    <label class="text-xs text-slate-300">回程</label>
+                    <input v-model="tripEnd" type="date"
+                      class="ml-1 rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400" />
+                  </div>
+                  <div class="text-xs text-slate-300">共 {{ tripDaysCount }} 天</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- day-selector navigation -->
+          <div class="flex items-center gap-2 mt-2 px-2 overflow-x-auto">
+            <button
+              v-for="(d, idx) in days" :key="d.id"
+              @click="selectedDayId = d.id"
+              class="px-3 py-1 rounded-full text-sm whitespace-nowrap"
+              :class="selectedDayId === d.id ? 'bg-white text-slate-900 shadow' : 'bg-white/10 text-slate-300'">
+              <div class="flex flex-col items-center">
+                <span>第{{ idx+1 }}天</span>
+                <span class="text-[10px] text-slate-400">
+                  {{ d.date || '未設定' }}
+                </span> <!-- keep date shown -->
+                <span class="text-[10px] text-slate-400">
+                  {{ d.flightTime ? '出: '+d.flightTime.replace('T',' ') : '' }}
+                </span>
+                <span class="text-[10px] text-slate-400">
+                  {{ d.returnTime ? '回: '+d.returnTime.replace('T',' ') : '' }}
+                </span>
+              </div>
+            </button>
+            <button @click="addDay()"
+                    class="px-3 py-1 bg-indigo-500/90 hover:bg-indigo-500 text-white rounded-full text-sm whitespace-nowrap">
+              ＋ 新增天
+            </button>
+          </div>
+
+          <div v-if="selectedDay" class="rounded-3xl p-4 bg-white/10 border border-white/10 backdrop-blur mt-2">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="flex items-center gap-2">
+                  <div class="text-sm font-semibold">Day {{ selectedDayIndex + 1 }} 行程</div>
+                  <input v-model="selectedDay.date" type="date"
+                    class="ml-2 rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400"
+                    title="旅程日期" />
+                  <input v-model.trim="selectedDay.title"
+                    class="ml-2 rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400"
+                    placeholder="例如：淺草 / 上野 / 晴空塔" />
+                </div>
+                <div class="text-xs text-slate-300">可直接編輯，會自動保存</div>
+              </div>
+              <button @click="removeDay(selectedDay.id)"
+                class="rounded-2xl px-3 py-2 bg-rose-500/80 hover:bg-rose-500 text-white"
+                :disabled="days.length === 1"
+                :class="days.length === 1 ? 'opacity-40 cursor-not-allowed' : ''"
+                title="刪除這一天">🗑️</button>
+            </div>
+            <div class="mt-2 flex items-center gap-2">
+              <input v-model="selectedDay.flightTime" type="datetime-local"
+                class="rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400"
+                placeholder="出發時間" />
+              <input v-model="selectedDay.returnTime" type="datetime-local"
+                class="rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400"
+                placeholder="回程時間" />
+              <input v-model.trim="selectedDay.flightLocation"
+                class="rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400"
+                placeholder="出發地 / 地點" />
+            </div>
+          </div>
+
+          <div class="mt-3 text-xs text-slate-300">可填 Lat/Lng 讓地圖標記更準</div>
+            <div class="mt-1 grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-xs text-slate-300">開始時間</label>
+                <input v-model="selectedDay.newItem.startTime" type="datetime-local"
+                  class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-emerald-300" />
+              </div>
+              <div>
+                <label class="text-xs text-slate-300">結束時間</label>
+                <input v-model="selectedDay.newItem.endTime" type="datetime-local"
+                  class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-emerald-300" />
+              </div>
+              <div class="col-span-2">
+                <label class="text-xs text-slate-300">地點</label>
+                <input v-model.trim="selectedDay.newItem.place"
+                  class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-emerald-300"
+                  placeholder="例如：淺草寺" />
+              </div>
+              <div class="col-span-2">
+                <label class="text-xs text-slate-300">備註</label>
+                <input v-model.trim="selectedDay.newItem.note"
+                  class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400"
+                  placeholder="例如：雷門拍照、仲見世通" />
+              </div>
+              <div class="col-span-2">
+                <label class="text-xs text-slate-300">Google 地圖連結（可選）</label>
+                <input v-model.trim="selectedDay.newItem.mapsUrl" type="url"
+                  class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400" 
+                  placeholder="https://goo.gl/maps/..." />
+              </div>
+            </div>
+            <div class="mt-3 flex justify-end">
+              <button @click="addItineraryItemTo(selectedDay)"
+                class="rounded-2xl px-3 py-2 bg-emerald-500/90 hover:bg-emerald-500 text-white font-medium">
+                ＋ 新增
+              </button>
+            </div>
+
+            <div class="mt-3 space-y-3">
+              <div v-if="selectedDay.items.length === 0" class="mt-4 text-center text-slate-300 text-sm">
+                這一天還沒有行程，先新增一筆吧 ✨
+              </div>
+              <div v-for="item in sortedItems(selectedDay)" :key="item.id"
+                class="rounded-3xl p-3 bg-white/5 border border-white/10">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="flex-1">
+                    <div class="flex items-center gap-2">
+                      <input v-model="item.startTime" type="datetime-local"
+                        class="rounded-2xl px-2 py-1 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm"
+                        style="min-width:110px" />
+                      <span class="text-xs">~</span>
+                      <input v-model="item.endTime" type="datetime-local"
+                        class="rounded-2xl px-2 py-1 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm"
+                        style="min-width:110px" />
+                      <input v-model.trim="item.place"
+                        class="w-full rounded-2xl px-2 py-1 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm"
+                        placeholder="地點" />
+                    </div>
+
+                    <input v-model.trim="item.note"
+                      class="mt-2 w-full rounded-2xl px-2 py-1 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm"
+                      placeholder="備註" />
+
+                    <div class="mt-2 flex flex-wrap gap-2">
+                      <button v-if="item.mapsUrl"
+                        @click="() => window.open(item.mapsUrl,'_blank')"
+                        class="rounded-2xl px-3 py-1.5 bg-cyan-500/90 hover:bg-cyan-500 text-white text-sm">
+                        🌐 地圖
+                      </button>
+                      <span v-else class="text-xs text-slate-300">(無地圖連結)</span>
+                    </div>
+                  </div>
+
+                  <button @click="deleteItem(selectedDay, item.id)"
+                    class="shrink-0 rounded-2xl px-3 py-2 bg-rose-500/80 hover:bg-rose-500 text-white"
+                    title="刪除">🗑️</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Split -->
+        <section v-show="activeTab === 'split'" class="space-y-4">
+          <div class="rounded-3xl p-4 bg-white/10 border border-white/10 backdrop-blur">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="text-sm font-semibold">分帳系統</div>
+                <div class="text-xs text-slate-300">輸入支出後自動結算「誰該給誰」</div>
+              </div>
+              <button @click="addExpense()"
+                class="rounded-2xl px-3 py-2 bg-indigo-500/90 hover:bg-indigo-500 text-white font-medium">
+                ＋ 新增支出
+              </button>
+            </div>
+
+            <div class="mt-4 rounded-3xl p-3 bg-white/5 border border-white/10">
+              <div class="flex items-center justify-between">
+                <div class="text-sm font-semibold">成員</div>
+                <button @click="addMember()"
+                  class="rounded-2xl px-3 py-1.5 bg-emerald-500/90 hover:bg-emerald-500 text-white text-sm">
+                  ＋ 新增成員
+                </button>
+              </div>
+
+              <div class="mt-3 space-y-2">
+                <div v-for="m in members" :key="m.id" class="flex items-center gap-2">
+                  <input v-model.trim="m.name"
+                    class="flex-1 rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-emerald-300 text-sm"
+                    placeholder="名字" />
+                  <button @click="removeMember(m.id)"
+                    class="rounded-2xl px-3 py-2 bg-rose-500/80 hover:bg-rose-500 text-white text-sm"
+                    :disabled="members.length<=2"
+                    :class="members.length<=2?'opacity-40 cursor-not-allowed':''"
+                    title="至少保留 2 人">🗑️</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-3 grid grid-cols-2 gap-2">
+              <div class="rounded-3xl p-3 bg-white/5 border border-white/10">
+                <div class="text-xs text-slate-300">幣別</div>
+                <select v-model="currency"
+                  class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm">
+                  <option value="JPY">JPY（日圓）</option>
+                  <option value="TWD">TWD（台幣）</option>
+                  <option value="USD">USD（美金）</option>
+                </select>
+              </div>
+              <div class="rounded-3xl p-3 bg-white/5 border border-white/10">
+                <div class="text-xs text-slate-300">四捨五入</div>
+                <select v-model.number="roundTo"
+                  class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm">
+                  <option :value="1">到 1</option>
+                  <option :value="10">到 10</option>
+                  <option :value="100">到 100</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="rounded-3xl p-4 bg-white/10 border border-white/10 backdrop-blur">
+            <div class="flex items-center justify-between">
+              <div class="text-sm font-semibold">支出列表</div>
+              <button v-if="expenses.length" @click="clearExpenses()"
+                class="rounded-2xl px-3 py-2 bg-rose-500/80 hover:bg-rose-500 text-white text-sm">
+                清空支出
+              </button>
+            </div>
+
+            <div v-if="expenses.length===0" class="mt-4 text-center text-slate-300 text-sm">
+              還沒有支出紀錄，新增一筆試試 ✨
+            </div>
+
+            <div class="mt-3 space-y-3">
+              <div v-for="ex in expenses" :key="ex.id" class="rounded-3xl p-3 bg-white/5 border border-white/10">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="flex-1 space-y-2">
+                    <div class="grid grid-cols-2 gap-2">
+                      <div>
+                        <label class="text-xs text-slate-300">項目</label>
+                        <input v-model.trim="ex.title"
+                          class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm"
+                          placeholder="例如：壽司郎" />
+                      </div>
+                      <div>
+                        <label class="text-xs text-slate-300">金額</label>
+                        <input v-model.number="ex.amount" type="number" min="0"
+                          class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm"
+                          placeholder="0" />
+                      </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2">
+                      <div>
+                        <label class="text-xs text-slate-300">付款人</label>
+                        <select v-model="ex.paidBy"
+                          class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm">
+                          <option v-for="m in members" :key="m.id" :value="m.id">{{ m.name || "未命名" }}</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="text-xs text-slate-300">分攤方式</label>
+                        <select v-model="ex.splitMode"
+                          class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm">
+                          <option value="equal">平均分</option>
+                          <option value="custom">自訂金額</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div class="rounded-3xl p-3 bg-white/5 border border-white/10">
+                      <div class="flex items-center justify-between">
+                        <div class="text-sm font-semibold">分攤人員</div>
+                        <button @click="toggleAllParticipants(ex)"
+                          class="rounded-2xl px-3 py-1.5 bg-white/10 hover:bg-white/15 border border-white/10 text-sm">
+                          全選/全不選
+                        </button>
+                      </div>
+
+                      <div class="mt-2 grid grid-cols-2 gap-2">
+                        <label v-for="m in members" :key="m.id"
+                          class="flex items-center gap-2 rounded-2xl px-3 py-2 bg-white/5 border border-white/10 hover:bg-white/10 cursor-pointer">
+                          <input type="checkbox" class="accent-indigo-400" v-model="ex.participants" :value="m.id" />
+                          <span class="text-sm">{{ m.name || "未命名" }}</span>
+                        </label>
+                      </div>
+
+                      <div v-if="ex.splitMode==='custom'" class="mt-3 space-y-2">
+                        <div class="text-xs text-slate-300">自訂分攤金額</div>
+                        <div class="grid grid-cols-2 gap-2">
+                          <div v-for="mId in ex.participants" :key="mId"
+                            class="rounded-2xl p-2 bg-white/5 border border-white/10">
+                            <div class="text-xs text-slate-300">{{ memberName(mId) }}</div>
+                            <input v-model.number="ex.customShares[mId]" type="number" min="0"
+                              class="mt-1 w-full rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-indigo-400 text-sm"
+                              placeholder="0" />
+                          </div>
+                        </div>
+                        <div class="text-xs text-slate-300">
+                          目前自訂總和：<span class="font-semibold text-slate-100">{{ formatMoney(customTotal(ex)) }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button @click="deleteExpense(ex.id)"
+                    class="shrink-0 rounded-2xl px-3 py-2 bg-rose-500/80 hover:bg-rose-500 text-white"
+                    title="刪除支出">🗑️</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="rounded-3xl p-4 bg-white/10 border border-white/10 backdrop-blur">
+            <div class="flex items-center justify-between">
+              <div class="text-sm font-semibold">結算結果</div>
+              <button @click="copySettlement()"
+                class="rounded-2xl px-3 py-2 bg-emerald-500/90 hover:bg-emerald-500 text-white text-sm">
+                複製結算
+              </button>
+            </div>
+
+            <div class="mt-3 grid grid-cols-2 gap-2">
+              <div class="rounded-3xl p-3 bg-white/5 border border-white/10">
+                <div class="text-xs text-slate-300">總支出</div>
+                <div class="text-lg font-semibold">{{ formatMoney(totalSpent) }}</div>
+              </div>
+              <div class="rounded-3xl p-3 bg-white/5 border border-white/10">
+                <div class="text-xs text-slate-300">人均（概算）</div>
+                <div class="text-lg font-semibold">{{ formatMoney(perCapita) }}</div>
+              </div>
+            </div>
+
+            <div class="mt-3 rounded-3xl p-3 bg-white/5 border border-white/10">
+              <div class="text-sm font-semibold">各自結餘（＋應收 / －應付）</div>
+              <div class="mt-2 space-y-2">
+                <div v-for="row in balancesView" :key="row.id"
+                  class="flex items-center justify-between rounded-2xl px-3 py-2 bg-white/5 border border-white/10">
+                  <div class="text-sm font-medium">{{ row.name }}</div>
+                  <div class="text-sm font-semibold"
+                    :class="row.balance>0?'text-emerald-300':row.balance<0?'text-rose-300':'text-slate-200'">
+                    {{ row.balance>0?'+':'' }}{{ formatMoney(row.balance) }}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-3 rounded-3xl p-3 bg-white/5 border border-white/10">
+              <div class="text-sm font-semibold">建議轉帳（最少筆數）</div>
+              <div v-if="settlements.length===0" class="mt-2 text-slate-300 text-sm">
+                目前不需要轉帳（或尚無支出）。
+              </div>
+              <div v-else class="mt-2 space-y-2">
+                <div v-for="(s, idx) in settlements" :key="idx"
+                  class="flex items-center justify-between rounded-2xl px-3 py-2 bg-white/5 border border-white/10">
+                  <div class="text-sm">
+                    <span class="font-semibold">{{ s.from }}</span>
+                    <span class="text-slate-300"> → </span>
+                    <span class="font-semibold">{{ s.to }}</span>
+                  </div>
+                  <div class="text-sm font-semibold text-amber-200">{{ formatMoney(s.amount) }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Map -->
+        <section v-show="activeTab === 'map'" class="space-y-4">
+          <div class="rounded-3xl p-4 bg-white/10 border border-white/10 backdrop-blur">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <div class="text-sm font-semibold">地圖與導航</div>
+                <div class="text-xs text-slate-300">顯示有座標的行程點</div>
+              </div>
+              <button @click="fitAllMarkers()"
+                class="rounded-2xl px-3 py-2 bg-white/10 hover:bg-white/15 border border-white/10 text-sm">
+                📌 自動縮放
+              </button>
+            </div>
+
+            <div class="mt-3 grid grid-cols-2 gap-2">
+              <div class="rounded-3xl p-3 bg-white/5 border border-white/10">
+                <div class="text-xs text-slate-300">標記數</div>
+                <div class="text-sm font-semibold">{{ mapPoints.length }}</div>
+              </div>
+              <div class="rounded-3xl p-3 bg-white/5 border border-white/10">
+                <div class="text-xs text-slate-300">中心</div>
+                <div class="text-sm font-semibold">{{ mapCenterText }}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="rounded-3xl p-3 bg-white/10 border border-white/10 backdrop-blur">
+            <div id="map" class="h-[360px] w-full"></div>
+          </div>
+
+          <div class="rounded-3xl p-4 bg-white/10 border border-white/10 backdrop-blur">
+            <div class="text-sm font-semibold">快速導航</div>
+            <div class="mt-3 space-y-2">
+              <div v-for="p in mapPoints" :key="p.key"
+                class="flex items-center justify-between gap-2 rounded-3xl px-3 py-2 bg-white/5 border border-white/10">
+                <div class="min-w-0">
+                  <div class="text-sm font-semibold truncate">{{ p.label }}</div>
+                  <div class="text-xs text-slate-300 truncate">{{ p.sub }}</div>
+                </div>
+                <div class="flex gap-2 shrink-0">
+                  <button @click="focusOnMap(p)"
+                    class="rounded-2xl px-3 py-2 bg-white/10 hover:bg-white/15 border border-white/10 text-sm">📍</button>
+                  <button @click="openNavigation(p)"
+                    class="rounded-2xl px-3 py-2 bg-cyan-500/90 hover:bg-cyan-500 text-white text-sm">🧭</button>
+                </div>
+              </div>
+
+              <div v-if="mapPoints.length===0" class="text-center text-slate-300 text-sm py-6">
+                還沒有含座標的行程點。到「行程」新增 Lat/Lng 就會出現 ✨
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <!-- Bottom nav -->
+      <nav class="fixed left-1/2 -translate-x-1/2 bottom-0 w-full max-w-[430px] px-5 pb-[calc(12px+var(--safe-b))] pt-3">
+        <div class="rounded-[28px] bg-white/10 border border-white/10 backdrop-blur shadow-lg">
+          <div class="grid grid-cols-3 gap-1 p-2">
+            <button @click="activeTab='itinerary'"
+              class="rounded-3xl py-3 text-sm font-medium transition"
+              :class="activeTab==='itinerary'?'bg-white text-slate-900':'hover:bg-white/10 text-slate-200'">
+              🗓️ 行程
+            </button>
+            <button @click="activeTab='split'"
+              class="rounded-3xl py-3 text-sm font-medium transition"
+              :class="activeTab==='split'?'bg-white text-slate-900':'hover:bg-white/10 text-slate-200'">
+              💸 分帳
+            </button>
+            <button @click="activeTab='map'"
+              class="rounded-3xl py-3 text-sm font-medium transition"
+              :class="activeTab==='map'?'bg-white text-slate-900':'hover:bg-white/10 text-slate-200'">
+              🗺️ 地圖
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      <!-- Settings modal -->
+      <div v-if="openSettings" class="fixed inset-0 z-50 flex items-end justify-center bg-black/60 px-4 pb-[calc(16px+var(--safe-b))]">
+        <div class="w-full max-w-[430px] rounded-t-[32px] bg-slate-950 border border-white/10">
+          <div class="p-5">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="text-lg font-semibold">設定</div>
+                <div class="text-xs text-slate-300">資料存在瀏覽器 localStorage（同裝置保留）</div>
+              </div>
+              <button @click="openSettings=false"
+                class="rounded-2xl px-3 py-2 bg-white/10 hover:bg-white/15 border border-white/10">✕</button>
+            </div>
+
+            <div class="mt-4 space-y-3">
+              <button @click="exportJson()"
+                class="w-full rounded-3xl px-4 py-3 bg-white/10 hover:bg-white/15 border border-white/10 text-left">
+                <div class="font-semibold">⬇️ 匯出 JSON</div>
+                <div class="text-xs text-slate-300 mt-1">備份你的行程/分帳資料</div>
+              </button>
+
+              <label class="block w-full rounded-3xl px-4 py-3 bg-white/10 hover:bg-white/15 border border-white/10 cursor-pointer">
+                <div class="font-semibold">⬆️ 匯入 JSON</div>
+                <div class="text-xs text-slate-300 mt-1">還原資料（會覆蓋目前資料）</div>
+                <input type="file" accept="application/json" class="hidden" @change="importJsonFile($event)" />
+              </label>
+
+              <button @click="resetAll()"
+                class="w-full rounded-3xl px-4 py-3 bg-rose-500/80 hover:bg-rose-500 text-left">
+                <div class="font-semibold text-white">🧨 重置全部資料</div>
+                <div class="text-xs text-white/90 mt-1">清空行程與支出（不可復原）</div>
+              </button>
+            </div>
+
+            <div class="mt-4 rounded-3xl p-4 bg-white/5 border border-white/10">
+              <div class="font-semibold">雲端分享</div>
+              <div class="text-xs text-slate-300 mt-1">使用 GitHub Gist 共享行程，可讓其他人開啟並匯入</div>
+              <div class="mt-3 flex flex-wrap gap-2 items-center">
+                <button @click="uploadItinerary()"
+                  class="rounded-2xl px-3 py-2 bg-cyan-500/90 hover:bg-cyan-500 text-white text-sm">
+                  上傳行程
+                </button>
+                <input v-model.trim="shareUrlInput" placeholder="貼上 Gist 網址載入"
+                  class="mt-1 w-full flex-1 rounded-2xl px-3 py-2 bg-white/5 border border-white/10 outline-none focus:ring-2 focus:ring-cyan-400 text-sm" />
+                <button @click="loadFromGist(shareUrlInput)"
+                  class="rounded-2xl px-3 py-2 bg-white/10 hover:bg-white/15 border border-white/10 text-sm">
+                  載入
+                </button>
+              </div>
+              <div v-if="shareUrl" class="text-xs text-slate-400 mt-1">
+                分享連結：<a :href="shareUrl" target="_blank" class="underline">{{ shareUrl }}</a>
+              </div>
+            </div>
+
+            <div class="mt-5 text-xs text-slate-400">
+              手機要像 App：iOS Safari「分享→加入主畫面」；Android Chrome「⋮→加到主畫面」。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Toast -->
+      <div class="fixed top-4 left-1/2 -translate-x-1/2 z-[60] px-4" v-if="toast.show">
+        <div class="max-w-[430px] rounded-3xl px-4 py-3 bg-slate-900/90 border border-white/10 backdrop-blur shadow-lg">
+          <div class="text-sm font-semibold">{{ toast.title }}</div>
+          <div class="text-xs text-slate-300 mt-0.5">{{ toast.message }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const STORAGE_KEY = "tokyo_trip_pocket_app_ghpages_v1";
+    const uid = () => Math.random().toString(36).slice(2, 10) + "-" + Date.now().toString(36);
+
+    const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+    const roundAmount = (value, roundTo) => {
+      if (!isFinite(value)) return 0;
+      const r = Math.max(1, Number(roundTo || 1));
+      return Math.round(value / r) * r;
+    };
+    const moneySymbol = (currency) => (currency === "JPY" ? "¥" : currency === "TWD" ? "NT$" : currency === "USD" ? "$" : "");
+    const parseLatLng = (obj) => {
+      // if using mapsUrl, try extract coordinates from @lat,lng pattern
+      if (obj && typeof obj.mapsUrl === "string"){
+        const m = obj.mapsUrl.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+        if(m){
+          const lat = Number(m[1]), lng = Number(m[2]);
+          if(isFinite(lat) && isFinite(lng)) return { lat, lng };
+        }
+      }
+      const lat = Number(obj.lat), lng = Number(obj.lng);
+      if (!isFinite(lat) || !isFinite(lng)) return null;
+      if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+      return { lat, lng };
+    };
+
+    function escapeHtml(s) {
+      return String(s ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+    function makeGmapsUrl(lat, lng, label) {
+      const q = encodeURIComponent(label || `${lat},${lng}`);
+      return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}(${q})`;
+    }
+
+    const App = {
+      data() {
+        return {
+          tabs: [
+            { key: "itinerary", label: "🗓️ 行程" },
+            { key: "split", label: "💸 分帳" },
+            { key: "map", label: "🗺️ 地圖" },
+          ],
+          activeTab: "itinerary",
+
+          openSettings: false,
+          toast: { show: false, title: "", message: "" },
+          toastTimer: null,
+
+          days: [],
+          selectedDayId: null,
+          shareUrl: "",
+          shareUrlInput: "",
+          members: [],
+          expenses: [],
+          currency: "JPY",
+          roundTo: 1,
+          // swipe tracking
+          touchXStart: null,
+          touchYStart: null,
+
+          map: null,
+          mapMarkers: new Map(),
+          mapCenter: { lat: 35.681236, lng: 139.767125 }, // Tokyo Station
+        };
+      },
+      computed: {
+        selectedDayIndex() { return Math.max(0, this.days.findIndex(d => d.id === this.selectedDayId)); },
+        selectedDay() { return this.days[this.selectedDayIndex] || null; },
+      totalItineraryCount() { return this.days.reduce((sum, d) => sum + (d.items?.length || 0), 0); },
+
+        mapPoints() {
+          const pts = [];
+          for (let di = 0; di < this.days.length; di++) {
+            const d = this.days[di];
+            for (const item of d.items) {
+              const ll = parseLatLng(item);
+              if (!ll) continue;
+              pts.push({
+                key: item.id,
+                label: item.place || "(未命名地點)",
+                sub: `Day ${di + 1} · ${d.title || ""} · ${item.startTime||""}${item.endTime?"-"+item.endTime:""}`,
+                lat: ll.lat, lng: ll.lng,
+                raw: item
+              });
+            }
+          }
+          return pts;
+        },
+        mapCenterText() {
+          const { lat, lng } = this.mapCenter || {};
+          return `${lat?.toFixed?.(5) ?? "-"}, ${lng?.toFixed?.(5) ?? "-"}`;
+        },
+
+        totalSpent() { return this.expenses.reduce((sum, ex) => sum + (Number(ex.amount) || 0), 0); },
+        perCapita() { return this.totalSpent / (this.members.length || 1); },
+
+        balances() {
+          const byId = new Map();
+          for (const m of this.members) byId.set(m.id, 0);
+
+          for (const ex of this.expenses) {
+            const amount = Number(ex.amount) || 0;
+
+            if (byId.has(ex.paidBy)) byId.set(ex.paidBy, byId.get(ex.paidBy) + amount);
+
+            const parts = Array.isArray(ex.participants) ? ex.participants : [];
+            if (!parts.length) continue;
+
+            if (ex.splitMode === "custom") {
+              for (const pid of parts) {
+                const share = Number(ex.customShares?.[pid]) || 0;
+                if (byId.has(pid)) byId.set(pid, byId.get(pid) - share);
+              }
+            } else {
+              const share = amount / parts.length;
+              for (const pid of parts) {
+                if (byId.has(pid)) byId.set(pid, byId.get(pid) - share);
+              }
+            }
+          }
+
+          const rounded = new Map();
+          for (const [id, v] of byId.entries()) rounded.set(id, roundAmount(v, this.roundTo));
+          return rounded;
+        },
+        balancesView() {
+          return this.members
+            .map(m => ({ id: m.id, name: m.name || "未命名", balance: this.balances.get(m.id) || 0 }))
+            .sort((a, b) => b.balance - a.balance);
+        },
+        settlements() {
+          const creditors = [], debtors = [];
+          for (const m of this.members) {
+            const b = this.balances.get(m.id) || 0;
+            if (b > 0) creditors.push({ name: m.name || "未命名", amount: b });
+            else if (b < 0) debtors.push({ name: m.name || "未命名", amount: -b });
+          }
+          creditors.sort((a, b) => b.amount - a.amount);
+          debtors.sort((a, b) => b.amount - a.amount);
+
+          const res = [];
+          let i = 0, j = 0;
+          while (i < debtors.length && j < creditors.length) {
+            const pay = debtors[i], recv = creditors[j];
+            const x = Math.min(pay.amount, recv.amount);
+            if (x > 0) {
+              res.push({ from: pay.name, to: recv.name, amount: x });
+              pay.amount -= x; recv.amount -= x;
+            }
+            if (pay.amount <= 0.000001) i++;
+            if (recv.amount <= 0.000001) j++;
+          }
+          return res;
+        },
+      },
+      watch: {
+        days: { deep: true, handler() { this.persist(); this.refreshMapMarkers(); } },
+        selectedDayId() { this.persist(); },
+        members: { deep: true, handler() { this.persist(); } },
+        expenses: { deep: true, handler() { this.persist(); } },
+        currency() { this.persist(); },
+        roundTo() { this.persist(); },
+        // ensure shareUrl is saved whenever it changes (e.g. after uploading or loading)
+        shareUrl() { this.persist(); },
+        activeTab(newTab) { if (newTab === "map") this.$nextTick(() => this.ensureMap()); },
+      },
+      mounted() {
+        this.load();
+        this.ensureAtLeastOneDay();
+        this.ensureAtLeastTwoMembers();
+        this.$nextTick(() => { if (this.activeTab === "map") this.ensureMap(); });
+      },
+      methods: {
+        showToast(title, message) {
+          clearTimeout(this.toastTimer);
+          this.toast = { show: true, title, message };
+          this.toastTimer = setTimeout(() => { this.toast.show = false; }, 2200);
+        },
+        persist() {
+          const daysClean = this.days.map(d => ({ id:d.id, title:d.title, date:d.date, flightTime:d.flightTime||'', returnTime:d.returnTime||'', flightLocation:d.flightLocation||'', items:d.items }));
+          const data = {
+            tripStart: this.tripStart,
+            tripEnd: this.tripEnd,
+            days: daysClean,
+            selectedDayId: this.selectedDayId,
+            members: this.members,
+            expenses: this.expenses,
+            currency: this.currency,
+            roundTo: this.roundTo,
+            shareUrl: this.shareUrl,
+          };
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        },
+        load() {
+          try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (!raw) {
+              this.days = [{
+                id: uid(),
+                title: "東京第一天",
+                date: new Date().toISOString().slice(0,10),
+                flightTime: '',
+                returnTime: '',
+                flightLocation: '',
+                items: [
+                  { id: uid(), startTime: "10:00", endTime: "11:00", place: "東京車站", note: "集合/寄放行李", mapsUrl: "" },
+                  { id: uid(), startTime: "14:00", endTime: "15:00", place: "淺草寺", note: "雷門拍照、仲見世通", mapsUrl: "" },
+                ],
+              }];
+              this.selectedDayId = this.days[0].id;
+              this.days.forEach(d=>this.initNewItem(d));
+              this.members = [{ id: uid(), name: "你" }, { id: uid(), name: "旅伴" }];
+              this.expenses = [];
+              this.currency = "JPY";
+              this.roundTo = 1;
+              this.persist();
+              return;
+            }
+            const data = JSON.parse(raw);
+            this.tripStart = data.tripStart || "";
+            this.tripEnd = data.tripEnd || "";
+            this.days = Array.isArray(data.days) ? data.days : [];
+            // migrate old items
+            this.days.forEach(d => {
+              const base = d.date || new Date().toISOString().slice(0,10);
+              (d.items || []).forEach(it => {
+                if(it.time && !it.startTime){
+                  it.startTime = it.time;
+                  it.endTime = "";
+                  delete it.time;
+                }
+                // convert plain times to datetime-local format
+                if(it.startTime && /^[0-9]{1,2}:[0-9]{2}$/.test(it.startTime)){
+                  it.startTime = `${base}T${it.startTime}`;
+                }
+                if(it.endTime && /^[0-9]{1,2}:[0-9]{2}$/.test(it.endTime)){
+                  it.endTime = `${base}T${it.endTime}`;
+                }
+                if(!it.mapsUrl && it.lat && it.lng){
+                  it.mapsUrl = `https://www.google.com/maps/search/?api=1&query=${it.lat},${it.lng}`;
+                }
+              });
+              if(!d.date) d.date = "";
+              if(!('flightTime' in d)) d.flightTime = '';
+              if(!('returnTime' in d)) d.returnTime = '';
+              if(!('flightLocation' in d)) d.flightLocation = '';
+              if(!('returnTime' in d)) d.returnTime = '';
+              this.initNewItem(d);
+            });
+            this.selectedDayId = data.selectedDayId || (this.days[0]?.id ?? null);
+            this.members = Array.isArray(data.members) ? data.members : [];
+            this.expenses = Array.isArray(data.expenses) ? data.expenses : [];
+            this.currency = data.currency || "JPY";
+            this.roundTo = Number(data.roundTo || 1);
+            this.shareUrl = data.shareUrl || "";
+            this.shareUrlInput = data.shareUrl || "";
+          } catch {
+            localStorage.removeItem(STORAGE_KEY);
+          }
+        },
+        ensureAtLeastOneDay() {
+          if (!this.days.length) {
+            this.days = [{ id: uid(), title: "東京第一天", items: [], date: new Date().toISOString().slice(0,10), flightTime:'', returnTime:'', flightLocation:'' }];
+            this.selectedDayId = this.days[0].id;
+          }
+          if (!this.selectedDayId) this.selectedDayId = this.days[0].id;
+          this.days.forEach(d=>{
+            if(!d.date) d.date = "";
+            this.initNewItem(d);
+          });
+        },
+        addDay() {
+          const n = this.days.length + 1;
+          const d = { id: uid(), title: `東京第${n}天`, items: [], date: new Date().toISOString().slice(0,10), flightTime: '', returnTime: '', flightLocation: '' };
+          this.initNewItem(d);
+          this.days.push(d);
+          this.selectedDayId = d.id;
+          this.showToast("已新增", `Day ${n}`);
+        },
+        removeSelectedDay() {
+          // keep for backward compatibility
+          if (this.selectedDayId) this.removeDay(this.selectedDayId);
+        },
+        addItineraryItem() {
+          // legacy; add to currently selected or first day
+          const day = this.days.find(d => d.id === this.selectedDayId) || this.days[0];
+          if (day) this.addItineraryItemTo(day);
+        },
+        // add item into a specific day
+        addItineraryItemTo(day) {
+          if (!day) return;
+          const ni = this.initNewItem(day);
+          const place = ni.place?.trim();
+          if (!place) { this.showToast("請輸入地點", "地點是必填的"); return; }
+          const item = {
+            id: uid(),
+            startTime: ni.startTime || "09:00",
+            endTime: ni.endTime || "10:00",
+            place,
+            note: ni.note?.trim() || "",
+            mapsUrl: ni.mapsUrl?.trim() || "",
+          };
+          day.items.push(item);
+          ni.startTime = "09:00";
+          ni.endTime = "10:00";
+          ni.place = "";
+          ni.note = "";
+          ni.mapsUrl = "";
+          this.showToast("已新增行程", `${item.startTime}-${item.endTime} · ${item.place}`);
+          this.refreshMapMarkers();
+        },
+        deleteItem(day, itemId) {
+          const items = (day && day.items) || [];
+          const idx = items.findIndex(x => x.id === itemId);
+          if (idx < 0) return;
+          const title = items[idx].place;
+          items.splice(idx, 1);
+          this.showToast("已刪除", title || "行程");
+          this.refreshMapMarkers();
+        },
+        // remove arbitrary day by id
+        removeDay(id) {
+          if (this.days.length <= 1) return;
+          const idx = this.days.findIndex(d => d.id === id);
+          if (idx < 0) return;
+          const title = this.days[idx].title;
+          if (!confirm(`確定刪除「${title}」？`)) return;
+          this.days.splice(idx, 1);
+          if (this.selectedDayId === id) {
+            this.selectedDayId = this.days[clamp(idx - 1, 0, this.days.length - 1)].id;
+          }
+          this.showToast("已刪除", title);
+        },
+        // helper to initialize newItem storage on a day
+        initNewItem(day) {
+          if (!day.newItem) {
+            const base = day.date || new Date().toISOString().slice(0,10);
+            day.newItem = { startTime: `${base}T09:00`, endTime: `${base}T10:00`, place: "", note: "", mapsUrl: "" };
+          }
+          return day.newItem;
+        },
+        // returns sorted items for given day
+        sortedItems(day) {
+          const items = (day && day.items) || [];
+          return [...items].sort((a, b) => ((a.startTime||a.time||"")+"").localeCompare((b.startTime||b.time||"")+""));
+        },
+        // day navigation helpers
+        changeDay(delta) {
+          if (!this.days.length) return;
+          let idx = this.selectedDayIndex;
+          idx = clamp(idx + delta, 0, this.days.length - 1);
+          if (idx !== this.selectedDayIndex) {
+            this.selectedDayId = this.days[idx].id;
+          }
+        },
+        prevDay() { this.changeDay(-1); },
+        nextDay() { this.changeDay(1); },
+        onTouchStart(evt) {
+          const t = evt.touches[0];
+          this.touchXStart = t.clientX;
+          this.touchYStart = t.clientY;
+        },
+        onTouchEnd(evt) {
+          if (this.touchXStart == null) return;
+          const t = evt.changedTouches[0];
+          const dx = t.clientX - this.touchXStart;
+          const dy = t.clientY - this.touchYStart;
+          this.touchXStart = null;
+          this.touchYStart = null;
+          if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) {
+            if (dx > 0) this.prevDay();
+            else this.nextDay();
+          }
+        },
+        // cloud share via GitHub Gist
+        async uploadItinerary() {
+          try{
+            const payload = { tripStart: this.tripStart, tripEnd: this.tripEnd, days: this.days.map(d=>({ id:d.id, title:d.title, date:d.date, flightTime:d.flightTime||'', returnTime:d.returnTime||'', flightLocation:d.flightLocation||'', items:d.items })), members: this.members, expenses: this.expenses };
+            const body = {
+              description: "Shared itinerary",
+              public: true,
+              files: { "itinerary.json": { content: JSON.stringify(payload, null, 2) } }
+            };
+            const res = await fetch("https://api.github.com/gists", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body)
+            });
+            const data = await res.json();
+            if(data.html_url){
+              // store the link so it survives reloads
+              this.shareUrl = data.html_url;
+              this.shareUrlInput = data.html_url;
+              this.showToast("上傳完成", data.html_url);
+              // persistence happens automatically via watcher on shareUrl
+            } else {
+              throw new Error("no url");
+            }
+          }catch(e){
+            console.error(e);
+            this.showToast("上傳失敗", e.message || "");
+          }
+        },
+        async loadFromGist(url){
+          try{
+            if(!url || !url.trim()){
+              this.showToast("載入失敗", "請輸入 Gist 網址");
+              return;
+            }
+            // sanitize and extract gist id, tolerate trailing slash or extra path
+            let trimmed = (url || "").trim();
+            if(trimmed.endsWith("/")) trimmed = trimmed.slice(0, -1);
+            const parts = trimmed.split("/").filter(Boolean);
+            const id = parts.pop();
+            if(!id) throw new Error("無效的 Gist 網址");
+
+            const res = await fetch(`https://api.github.com/gists/${id}`);
+            const data = await res.json();
+            const file = data.files && data.files["itinerary.json"];
+            if(file && file.content){
+              const obj = JSON.parse(file.content);
+              this.days = obj.days || [];
+              // ensure newItem for each day
+              this.days.forEach(d=>this.initNewItem(d));
+              this.members = obj.members || [];
+              this.expenses = obj.expenses || [];
+              this.selectedDayId = this.days[0]?.id || null;
+              // update share link to the one we loaded, so UI reflects it
+              const canonical = `https://gist.github.com/${id}`;
+              this.shareUrl = canonical;
+              this.shareUrlInput = canonical;
+
+              this.showToast("載入完成", "已取回資料");
+              // persist will run via watcher on shareUrl (and the data is saved separately by watchers of days/members/etc)
+              this.refreshMapMarkers();
+            } else {
+              throw new Error("內容不存在");
+            }
+          }catch(e){
+            console.error(e);
+            this.showToast("載入失敗", e.message||"");
+          }
+        },
+        hasLatLng(obj) { return !!parseLatLng(obj); },
+
+        openNavigation(obj) {
+          // if user provided full google maps URL, open it directly
+          if (obj.mapsUrl && typeof obj.mapsUrl === "string" && obj.mapsUrl.trim()) {
+            window.open(obj.mapsUrl.trim(), "_blank", "noopener,noreferrer");
+            return;
+          }
+          const ll = parseLatLng(obj);
+          const place = (obj.place || obj.label || "").trim();
+          let url = "";
+          if (ll) url = makeGmapsUrl(ll.lat, ll.lng, place);
+          else if (place) url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place)}`;
+          else { this.showToast("無法導航", "請填地點或座標"); return; }
+          window.open(url, "_blank", "noopener,noreferrer");
+        },
+        focusOnMap(obj) {
+          let ll = parseLatLng(obj) || (obj.lat && obj.lng ? { lat: Number(obj.lat), lng: Number(obj.lng) } : null);
+          if (!ll) {
+            if (obj.mapsUrl) {
+              window.open(obj.mapsUrl, "_blank", "noopener,noreferrer");
+              return;
+            }
+            this.showToast("無法定位", "請先提供座標"); this.activeTab="map"; return;
+          }
+          this.activeTab = "map";
+          this.$nextTick(() => {
+            this.ensureMap();
+            this.map.setView([ll.lat, ll.lng], 15, { animate: true });
+            this.mapCenter = { ...ll };
+            const marker = this.mapMarkers.get(obj.id || obj.key);
+            if (marker) marker.openPopup();
+          });
+        },
+
+        ensureMap() {
+          if (this.map) { this.refreshMapMarkers(); return; }
+          const el = document.getElementById("map");
+          if (!el) return;
+
+          this.map = L.map(el, { zoomControl: false }).setView([this.mapCenter.lat, this.mapCenter.lng], 12);
+          L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            maxZoom: 19,
+            attribution: '&copy; OpenStreetMap contributors',
+          }).addTo(this.map);
+          L.control.zoom({ position: "topright" }).addTo(this.map);
+
+          this.map.on("moveend", () => {
+            const c = this.map.getCenter();
+            this.mapCenter = { lat: c.lat, lng: c.lng };
+          });
+
+          this.refreshMapMarkers();
+          this.fitAllMarkers(true);
+        },
+
+        refreshMapMarkers() {
+          if (!this.map) return;
+
+          const alive = new Set(this.mapPoints.map(p => p.key));
+          for (const [key, marker] of this.mapMarkers.entries()) {
+            if (!alive.has(key)) { marker.remove(); this.mapMarkers.delete(key); }
+          }
+
+          for (const p of this.mapPoints) {
+            const key = p.key;
+            const popupHtml = `
+              <div style="min-width: 180px">
+                <div style="font-weight: 700; margin-bottom: 4px;">${escapeHtml(p.label)}</div>
+                <div style="font-size: 12px; opacity: 0.8; margin-bottom: 6px;">${escapeHtml(p.sub)}</div>
+                <a href="${makeGmapsUrl(p.lat, p.lng, p.label)}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;">
+                  <button style="padding:6px 10px; border-radius:12px; border:1px solid #ddd; background:#06b6d4; color:#fff; font-weight:700;">🧭 導航</button>
+                </a>
+              </div>
+            `;
+            if (this.mapMarkers.has(key)) {
+              const m = this.mapMarkers.get(key);
+              m.setLatLng([p.lat, p.lng]);
+              m.setPopupContent(popupHtml);
+            } else {
+              const m = L.marker([p.lat, p.lng]).addTo(this.map);
+              m.bindPopup(popupHtml);
+              this.mapMarkers.set(key, m);
+            }
+          }
+        },
+
+        fitAllMarkers(silent=false) {
+          if (!this.map) return;
+          const pts = this.mapPoints;
+          if (!pts.length) {
+            this.map.setView([35.681236, 139.767125], 12, { animate: !silent });
+            return;
+          }
+          const bounds = L.latLngBounds(pts.map(p => [p.lat, p.lng]));
+          this.map.fitBounds(bounds.pad(0.2), { animate: !silent });
+          if (!silent) this.showToast("已縮放", "已顯示全部標記");
+        },
+
+        ensureAtLeastTwoMembers() {
+          if (this.members.length < 2) {
+            this.members = [{ id: uid(), name: "你" }, { id: uid(), name: "旅伴" }];
+          }
+          for (const ex of this.expenses) {
+            if (!Array.isArray(ex.participants)) ex.participants = this.members.map(m => m.id);
+            if (!ex.customShares) ex.customShares = {};
+            if (!ex.paidBy) ex.paidBy = this.members[0].id;
+            if (!ex.splitMode) ex.splitMode = "equal";
+          }
+        },
+
+        addMember() {
+          this.members.push({ id: uid(), name: `成員${this.members.length + 1}` });
+          for (const ex of this.expenses) {
+            if (!Array.isArray(ex.participants) || ex.participants.length === 0) {
+              ex.participants = this.members.map(m => m.id);
+            }
+          }
+          this.showToast("已新增成員", "記得改名字");
+        },
+        removeMember(id) {
+          if (this.members.length <= 2) return;
+          const m = this.members.find(x => x.id === id);
+          if (!confirm(`確定刪除成員「${m?.name || "未命名"}」？`)) return;
+          this.members = this.members.filter(x => x.id !== id);
+          for (const ex of this.expenses) {
+            ex.participants = (ex.participants || []).filter(pid => pid !== id);
+            if (ex.customShares && ex.customShares[id] != null) delete ex.customShares[id];
+            if (ex.paidBy === id) ex.paidBy = this.members[0]?.id || ex.paidBy;
+          }
+          this.showToast("已刪除成員", m?.name || "");
+        },
+
+        addExpense() {
+          const ex = {
+            id: uid(), title: "", amount: 0,
+            paidBy: this.members[0]?.id || "",
+            splitMode: "equal",
+            participants: this.members.map(m => m.id),
+            customShares: {},
+          };
+          this.expenses.unshift(ex);
+          this.showToast("已新增支出", "填一下項目與金額");
+        },
+        deleteExpense(id) {
+          const idx = this.expenses.findIndex(x => x.id === id);
+          if (idx < 0) return;
+          this.expenses.splice(idx, 1);
+          this.showToast("已刪除", "支出已移除");
+        },
+        clearExpenses() {
+          if (!confirm("確定清空全部支出？")) return;
+          this.expenses = [];
+          this.showToast("已清空", "支出已全部移除");
+        },
+        toggleAllParticipants(ex) {
+          const all = this.members.map(m => m.id);
+          const cur = new Set(ex.participants || []);
+          const isAll = all.every(id => cur.has(id));
+          ex.participants = isAll ? [] : all;
+        },
+        memberName(id) { return this.members.find(x => x.id === id)?.name || "(已刪除)"; },
+        customTotal(ex) {
+          let sum = 0;
+          for (const pid of (ex.participants || [])) sum += Number(ex.customShares?.[pid]) || 0;
+          return sum;
+        },
+        formatMoney(v) {
+          const sym = moneySymbol(this.currency);
+          const num = Number(v) || 0;
+          const decimals = this.currency === "JPY" ? 0 : 2;
+          const formatted = num.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+          return `${sym}${formatted}`;
+        },
+        async copySettlement() {
+          const lines = [];
+          lines.push(`【分帳結算】幣別：${this.currency}（四捨五入到 ${this.roundTo}）`);
+          lines.push(`總支出：${this.formatMoney(this.totalSpent)}`);
+          lines.push("");
+          lines.push("各自結餘（＋應收 / －應付）：");
+          for (const r of this.balancesView) {
+            const sign = r.balance > 0 ? "+" : "";
+            lines.push(`- ${r.name}: ${sign}${this.formatMoney(r.balance)}`);
+          }
+          lines.push("");
+          lines.push("建議轉帳：");
+          if (!this.settlements.length) lines.push("- 不需要轉帳");
+          else for (const s of this.settlements) lines.push(`- ${s.from} → ${s.to}: ${this.formatMoney(s.amount)}`);
+
+          const text = lines.join("\n");
+          try { await navigator.clipboard.writeText(text); }
+          catch {
+            const ta = document.createElement("textarea");
+            ta.value = text; document.body.appendChild(ta);
+            ta.select(); document.execCommand("copy"); ta.remove();
+          }
+          this.showToast("已複製", "結算內容已在剪貼簿");
+        },
+
+        exportJson() {
+          const daysClean = this.days.map(d=>({ id:d.id, title:d.title, date:d.date, flightTime:d.flightTime||'', flightLocation:d.flightLocation||'', items:d.items }));
+          const payload = { version: 1, exportedAt: new Date().toISOString(), data: {
+            days: daysClean, selectedDayId: this.selectedDayId,
+            members: this.members, expenses: this.expenses,
+            currency: this.currency, roundTo: this.roundTo
+          }};
+          const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url; a.download = "tokyo-trip-pocket-export.json"; a.click();
+          URL.revokeObjectURL(url);
+          this.showToast("已匯出", "tokyo-trip-pocket-export.json");
+        },
+        importJsonFile(ev) {
+          const file = ev.target.files?.[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            try {
+              const payload = JSON.parse(String(reader.result || ""));
+              const data = payload.data || payload;
+              this.days = Array.isArray(data.days) ? data.days : [];
+              this.selectedDayId = data.selectedDayId || (this.days[0]?.id ?? null);
+              this.members = Array.isArray(data.members) ? data.members : [];
+              this.expenses = Array.isArray(data.expenses) ? data.expenses : [];
+              this.currency = data.currency || "JPY";
+              this.roundTo = Number(data.roundTo || 1);
+              this.ensureAtLeastOneDay();
+              this.ensureAtLeastTwoMembers();
+              this.persist();
+              this.refreshMapMarkers();
+              this.showToast("已匯入", "資料已還原");
+              this.openSettings = false;
+            } catch {
+              this.showToast("匯入失敗", "請確認 JSON 格式");
+            } finally {
+              ev.target.value = "";
+            }
+          };
+          reader.readAsText(file);
+        },
+
+        resetAll() {
+          if (!confirm("確定要重置全部資料？此操作不可復原。")) return;
+          localStorage.removeItem(STORAGE_KEY);
+          location.reload();
+        },
+      }
+    };
+
+    Vue.createApp(App).mount("#app");
+  </script>
+</body>
+</html>
