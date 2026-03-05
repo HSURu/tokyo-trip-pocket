@@ -640,14 +640,48 @@
 
     createApp({
       setup() {
-        const STORAGE_KEY = "trip_planner_v1";
+     // ✅ 1) 改成雲端用（不再用 localStorage）
+    const API_URL = "https://script.google.com/macros/s/AKfycbz95JzaF5YgrQFmOsc9ZG-kNjlhBrsvURUZpmQ4VvpbiKLPI8xAtdJjoQh97EXI8TIY_Q/exec";     // ← 換成你 Apps Script 部署的 /exec URL
+    const API_KEY = "go_to_trip_together_20260305";   // ← 跟 Apps Script 裡的 API_KEY 一模一樣
 
-        const tabs = [
-          { key: "overview", label: "總覽" },
-          { key: "trip", label: "旅程" },
-          { key: "schedule", label: "每日行程" },
-          { key: "split", label: "分帳" },
-        ];
+      // ✅ 2) 旅程 ID：用網址 ?trip=tokyo2026 決定共同編輯哪個旅程
+    const getTripIdFromUrl = () => {
+      const u = new URL(location.href);
+      return (u.searchParams.get("trip") || "").trim() || "demo";
+    };
+    const tripId = ref(getTripIdFromUrl());
+
+     // ✅ 3) API functions
+    async function apiGetTrip(id) {
+      const url = new URL(API_URL);
+      url.searchParams.set("action", "get");
+      url.searchParams.set("tripId", id);
+
+      const res = await fetch(url.toString());
+      return await res.json();
+   }
+
+    async function apiSaveTrip(id, data) {
+      const res = await fetch(API_URL, {
+       method: "POST",
+       headers: { "Content-Type": "application/json" },
+       body: JSON.stringify({
+         action: "save",
+          tripId: id,
+          key: API_KEY,
+         data
+       })
+    });
+    return await res.json();
+  }
+
+  // 你原本的 tabs 照放在這裡
+  const tabs = [
+    { key: "overview", label: "總覽" },
+    { key: "trip", label: "旅程" },
+    { key: "schedule", label: "每日行程" },
+    { key: "split", label: "分帳" },
+  ];
 
         const tab = ref("trip");
 
@@ -677,49 +711,41 @@
 
         const state = ref(defaultState());
 
-        // load
-        onMounted(() => {
-          try {
-            const raw = localStorage.getItem(STORAGE_KEY);
-            if (raw) {
-              const parsed = JSON.parse(raw);
-              // minimal shape merge
-              state.value = Object.assign(defaultState(), parsed);
-              if (!state.value.trip?.days?.length) state.value.trip.days = defaultState().trip.days;
-              // migrate old flight field into new structure; also add missing props
-              if ('flight' in state.value.trip) {
-                state.value.trip.startFlight = state.value.trip.flight || "";
-                delete state.value.trip.flight;
-              }
-              if (!('startTime' in state.value.trip)) state.value.trip.startTime = "";
-              if (!('startFlight' in state.value.trip)) state.value.trip.startFlight = "";
-              if (!('endTime' in state.value.trip)) state.value.trip.endTime = "";
-              if (!('returnFlight' in state.value.trip)) state.value.trip.returnFlight = "";
-              if (!('notes' in state.value.trip)) state.value.trip.notes = "";
-              // strip obsolete "place" field from days
-              if (state.value.trip.days && Array.isArray(state.value.trip.days)) {
-                state.value.trip.days = state.value.trip.days.map(d => ({
-                  id: d.id,
-                  schedule: d.schedule || []
-                }));
-              }
-              if (!state.value.split?.people?.length) state.value.split.people = defaultState().split.people;
-              if (!state.value.split?.expenses) state.value.split.expenses = [];
-              if (state.value.activeDayIndex >= state.value.trip.days.length) state.value.activeDayIndex = 0;
-            }
-          } catch (e) {
-            console.warn("load failed", e);
-          }
-        });
+  // ✅ load from cloud (Google Sheets)
+  onMounted(async () => {
+    try {
+      const r = await apiGetTrip(tripId.value);
 
-        // auto-save
-        watch(state, (v) => {
-          try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(v));
-          } catch (e) {
-            console.warn("save failed", e);
-          }
-        }, { deep: true });
+      if (r.ok && r.exists && r.data) {
+        // 讀到雲端資料
+        state.value = Object.assign(defaultState(), r.data);
+        // 補齊必要欄位（避免舊資料缺欄位造成報錯）
+        if (!state.value.trip?.days?.length) state.value.trip.days = defaultState().trip.days;
+        if (!state.value.split?.people?.length) state.value.split.people = defaultState().split.people;
+        if (!state.value.split?.expenses) state.value.split.expenses = [];
+        if (state.value.activeDayIndex >= state.value.trip.days.length) state.value.activeDayIndex = 0;
+      } else {
+        // 雲端沒有這個 tripId：建立一份新資料上去
+        await apiSaveTrip(tripId.value, state.value);
+      }
+    } catch (e) {
+      console.warn("cloud load failed", e);
+      // 如果雲端掛了，這裡你也可以選擇 fallback 到 localStorage（先不做也行）
+    }
+  });
+  // ✅ auto-save to cloud (debounce)
+  let saveTimer = null;
+  watch(state, () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      try {
+        const r = await apiSaveTrip(tripId.value, state.value);
+        if (!r.ok) console.warn("cloud save failed", r);
+      } catch (e) {
+        console.warn("cloud save failed", e);
+      }
+    }, 1200); // 1.2 秒內多次修改只會存一次
+  }, { deep: true });
 
         const trip = computed(() => state.value.trip);
         const split = computed(() => state.value.split);
@@ -755,7 +781,8 @@
         });
 
         const footerHint = computed(() => {
-          if (tab.value === "trip") return "設定旅程天數與每天要去的地方";
+          if (tab.value === "overview") return "快速總覽每日行程";
+          if (tab.value === "trip") return "設定旅程天數與基本資訊";
           if (tab.value === "schedule") return "可新增/編輯/刪除行程，並一鍵開 Google Map";
           return "輸入支出後自動算誰該給誰";
         });
